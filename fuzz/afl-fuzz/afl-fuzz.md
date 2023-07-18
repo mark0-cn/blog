@@ -39,3 +39,50 @@
 **load_auto** 加载额外的一些数据
 
 **pivot_inputs** 为测试用例在out_dir/queue中创建硬链接
+
+**load_extras** 从extras目录中读取extras并按大小排序
+
+**find_timeout** 从fuzzer_stats文件中读取exec_timeout选项（-t 选项）
+
+**detect_file_args** 从命令行中寻找@@符号，用 **.cur_input** 路径代替
+
+**setup_stdio_file** 打开 **.cur_input** 文件
+
+**check_binary** 通过检查文件头和memmem查找magic number方法，检查binary是否是脚本、是否是ELF、是否被插桩、是否使用afl-gcc编译等
+
+**get_cur_time** 获取时间
+
+**get_qemu_argv**
+
+**perform_dry_run**
++ 从queue中读取文件，执行 **calibrate_case**
++ 根据 **calibrate_case** 返回值判断运行结果
+``` c
+/* Execution status fault codes */
+
+enum {
+  /* 00 */ FAULT_NONE,
+  /* 01 */ FAULT_TMOUT,
+  /* 02 */ FAULT_CRASH,
+  /* 03 */ FAULT_ERROR,
+  /* 04 */ FAULT_NOINST,
+  /* 05 */ FAULT_NOBITS
+};
+```
+**calibrate_case**
+
+1. **init_forkserver** fork 用于分布式通信
+2. 将 trace_bits 拷贝到 first_trace
+3. 调用 **has_new_bits**
+4. **get_cur_time_us** 获取运行开始时间
+5. 运行 stage_max 次
+   1. **write_to_testcase** 把文件写入到 **.cur_input**
+   2. **run_target** 判断是否是分布式运行
+   + 否：fork，子进程执行 **execv(target_path, argv)**
+   + 是：通过pipe通信
+6. 调用 **hash32** 查看是否有新的路径
+   + 是：调用 **has_new_bits**
+   + 否：将 trace_bits 保存到 first_trace
+7. **get_cur_time_us** 获取运行结束时间
+8. **update_bitmap_score** 根据 queue 中的每个对象的 exec_us 和 len 计算分数
+9. **show_stats** 显示运行相关信息
