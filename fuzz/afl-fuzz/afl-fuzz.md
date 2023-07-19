@@ -86,3 +86,61 @@ enum {
 7. **get_cur_time_us** 获取运行结束时间
 8. **update_bitmap_score** 根据 queue 中的每个对象的 exec_us 和 len 计算分数
 9. **show_stats** 显示运行相关信息
+
+**cull_queue** 精简队列，该算法选择一个较小的测试用例子集，该子集仍覆盖到目前为止所看到的每个元组，并且其特征使它们对Fuzzing特别有利。该算法通过为每个队列条目分配与其执行延迟和文件大小成正比的分数来工作;然后为每个tuples选择最低得分候选者。
+
+这里需要结合update_bitmap_score()进行理解。update_bitmap_score在trim_case和calibrate_case中被调用，用来维护一个最小(favored)的测试用例集合(top_rated[i])。这里会比较执行时间*种子大小，如果当前用例更小，则会更新top_rated。结合以下事例更容易理解
+
+```
+tuple t0,t1,t2,t3,t4；seed s0,s1,s2 初始化temp_v=[1,1,1,1,1]
+s1可覆盖t2,t3 | s2覆盖t0,t1,t4，并且top_rated[0]=s2，top_rated[2]=s1
+开始后判断temp_v[0]=1，说明t0没有被访问
+top_rated[0]存在(s2) -> 判断s2可以覆盖的范围 -> trace_mini=[1,1,0,0,1]
+更新temp_v=[0,0,1,1,0]
+标记s2为favored
+继续判断temp_v[1]=0，说明t1此时已经被访问过了，跳过
+继续判断temp_v[2]=1，说明t2没有被访问
+top_rated[2]存在(s1) -> 判断s1可以覆盖的范围 -> trace_mini=[0,0,1,1,0]
+更新temp_v=[0,0,0,0,0]
+标记s1为favored
+此时所有tuple都被覆盖，favored为s1,s2
+```
+
+**mark_as_redundant** 将非 favored 文件写入到/queue/.state/redundant_edges/
+
+**show_init_stats** 显示一些统计信息
+
+**find_start_position** 恢复上一次执行，只有找到 fuzzer_stats 文件时才生效
+
+**write_stats_file** 创建 outdir/fuzzer_stats，并往里写入运行状态
+
+**save_auto** 更新token
+
+### 主循环
+
+1. **cull_queue** 首先精简队列
+
+2. 根据**find_start_position**函数返回值，做样本偏移
+
+3. **show_stats** 显示运行状态
+
+4. 如果分布式运行，通过**sync_fuzzers**同步状态
+
+5. **fuzz_one** 对testcase进行fuzz
+
+6. 根据一定的频率，调用**sync_fuzzers**同步状态
+
+**write_bitmap** 向 outdir/fuzz_bitmap 写入 virgin_bits
+
+**write_stats_file** 向 outdir/fuzzer_stats 文件中写入运行状态
+
+**save_auto** 保存token
+
+一些销毁函数
+``` c
+  fclose(plot_file);
+  destroy_queue();
+  destroy_extras();
+  ck_free(target_path);
+  ck_free(sync_id);
+```
