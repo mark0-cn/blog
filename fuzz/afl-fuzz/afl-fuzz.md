@@ -235,7 +235,122 @@ top_rated[2]存在(s1) -> 判断s1可以覆盖的范围 -> trace_mini=[0,0,1,1,0
 ### SIMPLE BITFLIP 阶段分析
 
 1. bitflip 1/1(flip1)，执行次数：len << 3。
-<br>通过调用 FLIP_BIT 宏实现步长为1的单bit反转
++ 通过调用 FLIP_BIT 宏实现步长为1的单bit反转
++ **common_fuzz_stuff**函数调用**write_to_testcase**函数将buf写入到out_dir/.cur_input文件中
++ **run_target**函数运行测试用例，返回结果
++ **save_if_interesting**: 如果在这一次运行测试用例时，有新路径被发现，则将这个测试用例保存在out_dir/queue文件夹中
++ 再次通过 FLIP_BIT 宏将buf翻转成原来的样子
+
+在进行bitflip 1/1变异时，对于每个byte的最低位(least significant bit)翻转还进行了额外的处理：如果连续多个bytes的最低位被翻转后，程序的执行路径都未变化，而且与原始执行路径不一致(检测程序执行路径的方式可见上篇文章中“分支信息的分析”一节)，那么就把这一段连续的bytes判断是一条token。
+
+例如，PNG文件中用IHDR作为起始块的标识，那么就会存在类似于以下的内容
+.......IHDR........
+
+当翻转到字符I的最高位时，因为IHDR被破坏，此时程序的执行路径肯定与处理正常文件的路径是不同的；随后，在翻转接下来3个字符的最高位时，IHDR标识同样被破坏，程序应该会采取同样的执行路径。由此，AFL就判断得到一个可能的token：IHDR，并将其记录下来为后面的变异提供备选。
+
+AFL采取的这种方式是非常巧妙的：就本质而言，这实际上是对每个byte进行修改并检查执行路径；但集成到bitflip后，就不需要再浪费额外的执行资源了。此外，为了控制这样自动生成的token的大小和数量，AFL还在config.h中通过宏定义了限制.
+
+对于一些文件来说，我们已知其格式中出现的token长度不会超过4，那么我们就可以修改MAX_AUTO_EXTRA为4并重新编译AFL，以排除一些明显不会是token的情况。遗憾的是，这些设置是通过宏定义来实现，所以不能做到运行时指定，每次修改后必须重新编译AFL
+
+``` c
+    if (!dumb_mode && (stage_cur & 7) == 7) {
+
+      u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+
+      if (stage_cur == stage_max - 1 && cksum == prev_cksum) {
+
+        /* If at end of file and we are still collecting a string, grab the
+           final character and force output. */
+
+        if (a_len < MAX_AUTO_EXTRA) a_collect[a_len] = out_buf[stage_cur >> 3];
+        a_len++;
+
+        if (a_len >= MIN_AUTO_EXTRA && a_len <= MAX_AUTO_EXTRA)
+          maybe_add_auto(a_collect, a_len);
+
+      } else if (cksum != prev_cksum) {
+
+        /* Otherwise, if the checksum has changed, see if we have something
+           worthwhile queued up, and collect that if the answer is yes. */
+
+        if (a_len >= MIN_AUTO_EXTRA && a_len <= MAX_AUTO_EXTRA)
+          maybe_add_auto(a_collect, a_len);
+
+        a_len = 0;
+        prev_cksum = cksum;
+
+      }
+
+      /* Continue collecting string, but only if the bit flip actually made
+         any difference - we don't want no-op tokens. */
+
+      if (cksum != queue_cur->exec_cksum) {
+
+        if (a_len < MAX_AUTO_EXTRA) a_collect[a_len] = out_buf[stage_cur >> 3];        
+        a_len++;
+
+      }
+
+    }
+```
+
+2. bitflip 2/1(flip2)，执行次数：(len << 3)-1。
++ 通过连续调用两次 FLIP_BIT 宏实现步长为2的单bit反转
+3. bitflip 4/1(flip4)，执行次数：(len << 3)-3。
++ 通过连续调用四次 FLIP_BIT 宏实现步长为4的单bit反转 
+4. bitflip 8/8(flip8)，执行次数：len。
++ 通过每个字节 ^0xFF 实现翻转
+
+通过比较运行前后的 trace_bits 去判断这个 byte 是否影响执行路径，并把这个 byte 用 eff_map 数组保存。这样可以后续耗时阶段跳过这个字节
+``` c
+if (!eff_map[EFF_APOS(stage_cur)]) {
+
+    u32 cksum;
+
+    /* If in dumb mode or if the file is very short, just flag everything
+        without wasting time on checksums. */
+
+    //当是主从模式后者文件小于 EFF_MIN_LEN 时，全部字节都是有效的。fuzz会变异全部字节
+    if (!dumb_mode && len >= EFF_MIN_LEN)
+    cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+    else
+    cksum = ~queue_cur->exec_cksum;
+
+    if (cksum != queue_cur->exec_cksum) {
+    eff_map[EFF_APOS(stage_cur)] = 1;
+    eff_cnt++;
+    }
+
+}
+
+/* If the effector map is more than EFF_MAX_PERC dense, just flag the
+    whole thing as worth fuzzing, since we wouldn't be saving much time
+    anyway. */
+    
+// 或者当eff_map大于90%时，默认全部字节都有效，变异全部字节
+if (eff_cnt != EFF_ALEN(len) &&
+    eff_cnt * 100 / EFF_ALEN(len) > EFF_MAX_PERC) {
+
+    memset(eff_map, 1, EFF_ALEN(len));
+
+    blocks_eff_select += EFF_ALEN(len);
+
+    } else {
+
+    blocks_eff_select += eff_cnt;
+
+}
+```
+
+5. bitflip 16/8(flip16)，执行次数：len-1。
+
+通过判断 eff_map 的值去跳过该阶段
+``` c
+if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)]) {
+    stage_max--;
+    continue;
+}
+```
 
 ## trim_case 函数分析
 先省略，以后再补充
