@@ -352,6 +352,46 @@ if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)]) {
 }
 ```
 
+6. bitflip 32/8(flip32)，执行次数：len-3。
+
+### ARITHMETIC INC/DEC 阶段分析
+
+1. arith 8/8(arith8)，执行次数：2 * len * ARITH_MAX。
+<br>对 buf 的每一个字节进行 ARITH_MAX 大小的加减法。**could_be_bitflip** 检测变异之后，是否和某种bit相同，提高效率。
+
+2. arith 16/8(arith16)，执行次数：4 * (len - 1) * ARITH_MAX。
+<br>与 arith8 步骤基本相似，新增了一个对于大小端的变异
+
+3. arith 32/8(arith32)，执行次数：4 * (len - 3) * ARITH_MAX。
+<br>与上述过程相同
+
+### INTERESTING VALUES 阶段分析
+
+1. interest 8/8(int8)，执行次数：len * sizeof(interesting_8)。
+<br>把一个字节替换成指定字节进行fuzz测试
+
+``` c
+// 这些数是一些边界，替换后可能会造成溢出
+static s8  interesting_8[]  = { INTERESTING_8 };
+static s16 interesting_16[] = { INTERESTING_8, INTERESTING_16 };
+static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
+```
+
+2. interest 16/8(int16)，执行次数：2 * (len - 1) * (sizeof(interesting_16) >> 1)。
+<br>把两个字节替换成指定字节进行fuzz测试，新增了一个对于大小端的变异
+
+3. interest 32/8(int32)，执行次数：2 * (len - 3) * (sizeof(interesting_32) >> 2)。
+<br>与上述过程相同
+
+### DICTIONARY STUFF 阶段分析
+
+**如果没有设置 extras 则跳过该阶段**
+
+1. user extras (over)(ext_UO)，执行次数：extras_cnt * len。把用户提供的data逐字节替换buf
+2. user extras (insert)(ext_UI)，执行次数：extras_cnt * (len + 1)。把用户提供的data逐字节插入到buf
+3. auto extras (over)(ext_AO)，执行次数：MIN(a_extras_cnt, USE_AUTO_EXTRAS) * len。将自动检测的tokens依次替换到原文件中
+
+
 ## trim_case 函数分析
 先省略，以后再补充
 
