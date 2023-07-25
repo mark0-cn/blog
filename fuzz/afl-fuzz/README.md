@@ -11,3 +11,5 @@
 [[翻译]AFL生态圈](https://bbs.kanxue.com/thread-251051.htm)
 
 [AFL二三事——源码分析](https://blog.csdn.net/further_eye/article/details/120842471?utm_medium=distribute.pc_relevant.none-task-blog-2~default~baidujs_baidulandingword~default-12-120842471-blog-124582159.235^v38^pc_relevant_sort_base1&spm=1001.2101.3001.4242.7&utm_relevant_index=15)
+
+[深入浅出AFL插桩](https://bladchan.github.io/2022/12/27/%E6%B7%B1%E5%85%A5%E6%B5%85%E5%87%BA%E5%89%96%E6%9E%90AFL%E6%8F%92%E6%A1%A9/)
