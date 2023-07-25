@@ -391,9 +391,18 @@ static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
 2. user extras (insert)(ext_UI)，执行次数：extras_cnt * (len + 1)。把用户提供的data逐字节插入到buf
 3. auto extras (over)(ext_AO)，执行次数：MIN(a_extras_cnt, USE_AUTO_EXTRAS) * len。将自动检测的tokens依次替换到原文件中
 
+### RANDOM HAVOC 阶段分析
+
+1. havoc (havoc),根据随机数随机对buf进行更改
+
+### SPLICING 阶段分析
+
+1. 通过**locate_diffs** 函数进行两个文件比较，如果相差较大，则把两个文件拼接起来得到新文件，新文件进行fuzz
+
 
 ## trim_case 函数分析
-先省略，以后再补充
+
+从文件的 1/16 到 1/1024 进行文件裁剪。当裁剪后到buf不影响 trace_bits 时，保存裁剪结果。
 
 ## 相关结构体
 
