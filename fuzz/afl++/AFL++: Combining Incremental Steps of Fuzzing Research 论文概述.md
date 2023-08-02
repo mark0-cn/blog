@@ -85,3 +85,9 @@ AFL++ can fuzz Android libraries with compiler instrumentation using LLVMLLVM
 ## 3.4 Platform Support
 
 GNU/Linux, the fuzzer runs on Android, iOS, macOS, FreeBSD, OpenBSD, NetBSD and is packaged in several popular distributions like Debian, Ubuntu, NixOS, Arch Linux, FreeBSD, Kali Linux and more.
+
+## 3.5 Snapshot LKM
+
+fork() is wellknown to be a performance bottleneck for a large number of targets
+
+为了避免 fork 的瓶颈，利用 Snapshot LKM 技术
