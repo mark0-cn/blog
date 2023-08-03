@@ -15,3 +15,5 @@
 [官方paper: MOpt](https://www.usenix.org/system/files/sec19-lyu.pdf)
 
 [官方paper: AFLSmart](https://thuanpv.github.io/publications/TSE19_aflsmart.pdf)
+
+[官方paper: LibAFL](https://www.s3.eurecom.fr/docs/ccs22_fioraldi.pdf)
