@@ -66,6 +66,30 @@ Finite State Automatons. Gramatron利用下推自动机（PDA）创建语法自�
 
 语法感知的变异操作符在维持语法有效性的同时对输入进行变异。它们接受语法和一个语法上有效的测试用例作为输入，用于创建变异体。有三种已经被证明在发现深层次错误方面非常成功的变异操作符 [2]：随机变异（选择一个随机的非叶子非终结符节点并创建一个新的子树）、随机递归（查找递归产生规则并展开最多n次）以及拼接（将两个输入合并而保持语法结构）。我们在Gramatron中实现了它们，并为了快速且积极地生成变异体进行了定制。
 
+```c
+  if (data->mut_idx == 0) { // Perform random mutation
+      data->mutated_walk = performRandomMutation(data->afl->pda, data->orig_walk);
+      data->mut_alloced = 1;
+  } else if (data->mut_idx == 1 && data->recurlen) { // Perform recursive mutation
+      data->mutated_walk = doMult(data->orig_walk, data->recurIdx, data->recurlen);  
+      data->mut_alloced = 1;
+  } else if (data->mut_idx == 2) { // Perform splice mutation
+
+      // Read the input representation for the splice candidate
+      u8* automaton_fn = alloc_printf("%s.aut", add_buf);
+      Array* spliceCandidate = read_input(data->afl->pda, automaton_fn);
+
+      data->mutated_walk = performSpliceOne(data->orig_walk, data->statemap, spliceCandidate); 
+      data->mut_alloced = 1;
+      free(spliceCandidate->start);
+      free(spliceCandidate);
+      free(automaton_fn);
+  } else { // Generate an input from scratch
+      data->mutated_walk = gen_input(data->afl->pda, NULL); 
+      data->mut_alloced = 1;
+  }
+```
+
 # 3 GRAMATRON OVERVIEW
 
 Gramatron是一个基于覆盖率引导的、语法感知的生成式模糊测试工具。作为输入，Gramatron接受目标所接受的上下文无关文法（CFG）。Gramatron输出导致崩溃的测试用例。图1突显了Gramatron的两个明显阶段：第一是预处理阶段，接着是第二个模糊测试阶段。在预处理阶段，Gramatron将一个文法转换为其对应的文法自动机。它首先将文法转换为一种用于无偏输入采样的形式，然后创建文法自动机。该自动机是一个有限状态自动机（FSA），它编码了由文法表示的输入空间。
@@ -97,3 +121,72 @@ Biased sampling. Listing 1中的CFG显示了传统结构如何强制模糊器从
 图3所示的文法自动机描述了CFG的GNF（Listing 2）。GNF允许Gramatron从输入状态空间中进行无偏抽样。它重新结构了文法，明确枚举了每个非终结符可以生成的所有不同子树。因此，我们可以看到与函数调用对应的子树变得生成的可能性增加了一倍，因为它们可以生成两倍多的子树。
 
 Aggressive mutations. Gramatron使用积极变异操作符。具体来说，给定一个输入字符串和一个变异点，Gramatron会相对于变异点一直变异到字符串的末尾。与解析树相比，自动机的设计更有利于执行这种变化。
+
+## 4.2 Automaton Construction
+
+我们首先描述了 Gramatron 使用的自动机构造算法。然后，我们将讨论在应用此算法时面临的挑战，以及我们用来解决该挑战的见解。
+
+Construction Algorithm. Gramatron 通过两个步骤来将语法转换为相应的自动机：（i）将语法转换为其 GNF（格雷巴赫正规形式），（ii）将转换后的语法转换为自动机。首先，Gramatron 将语法 G 转换为其 CNF（乔姆斯基正规形式），然后对其 CNF 进行固定点迭代，将其转换为其 GNF。Gramatron 首先通过为每个 CFG 产生规则指定 PDA 的转移函数来执行其语法构造。对于 GNF 中的语法，转移函数为：δ(q, t, A) = {(q, W)|A → tW ∈ R}。其中，t 是终端，A 是非终端，W 对应于一个非终端集合。Gramatron 使用这个转移函数来构建语法自动机。它通过枚举（如果可能）属于 CFG 的所有有效 PDA 堆栈状态来实现。语法自动机中的最终状态对应于空栈。对于每个堆栈状态，语法自动机中都存在一个状态。
+
+Gramatron使用基于工作列表的算法来构建自动机。它使用一个元组来初始化工作列表，该元组由初始自动机状态和其带有语法开始符号的解析堆栈组成。它在工作列表为空之前进行迭代。在每次迭代中，它执行以下步骤：（i）从工作列表中弹出一个元素，（ii）从元素的解析堆栈（P）中弹出顶部的堆栈符号（S）以创建新的堆栈P'。对于堆栈符号，根据转移函数找到所有可能的转换，（iii）对于每个转换，通过将堆栈符号（如果有的话）以相反的顺序推入堆栈P'来计算新的堆栈P''，（iv-a）如果P''等于先前生成的自动机状态的解析堆栈，则使用终端t从当前状态创建到该状态的转换，并且（iv-b）如果P''是一个新的堆栈状态，则使用终端t从当前状态创建到一个具有堆栈P''的新自动机状态，并将新的自动机状态以及其解析堆栈添加到工作列表中。在有限状态自动机上进行自动机行走将创建一个新的种子输入。
+
+Construction Challenge/Insight. 从理论上讲，将任意的上下文无关文法（CFG）转化为有限状态自动机（FSA）是不可能的。这种不可能性源于一种特定类型的文法，即具有无限自动机状态的自嵌套文法。如果一个CFG包含形式为 ω ∗=⇒uωv 的产生式规则，则称其为自嵌套。这里 {u, v} ∈ T + 且 ω ∈ N，如ğ 2.1所示。
+
+然而，我们得出的一个关键洞察是，语法感知模糊器对生成的输入大小有一个上界。这确保它们不会生成任意大的输入。因此，它们实例化了CFG指定的语言的一个子集（下估计）。这里，语言指的是可以从CFG生成的输入的（可能）无限状态空间。Gramatron利用这个洞察来在创建语法自动机时解决了理论上的不可能性。它使用正则语言近似[8, 25, 33]来近似CFG。然后将这个正则近似转化为语法自动机。
+
+为了进行这种正则近似，Gramatron在生成自动机时限制了解析堆栈的大小（在算法中表示为P）为一个上界[4, 22]。因此，构建算法终止并构建了一个自动机。产生的折衷是生成的自动机只能表示自嵌套文法指定的语言的一个子集。在编程语言文法的背景下，这意味着自嵌套规则的结构只能嵌套到一个静态深度。这个深度与用户指定的允许堆栈大小成正比，可以相应地进行调整。
+
+然而，在模糊测试的背景下，这种权衡并不会产生负面影响。语法感知模糊器已经限制了输入大小，以防止生成任意大的输入。因此，语法自动机使得Gramatron在与现有的语法感知模糊器相比具有相同的表达能力的同时，性能更高。
+
+上述讨论中的一个例外是非自嵌套文法。它们不包含任何自嵌套规则。这种文法有有限数量的可能状态和转换[1]。因此，Gramatron可以生成一个语法自动机，可以生成与非自嵌套CFG指定的确切语言相同的语言。
+
+## 4.3 Automata-Based Mutation
+
+变异操作符（splicing, random mutation, and random recursive）是在语法自动机行走路径上进行操作的。为了解决陷入局部子树的风险，我们使拼接和随机变异操作符能够执行更加积极的变化。给定一个输入字符串和其中的一个变异点，Gramatron会对其进行变异，直到达到字符串的末尾。对于每个变异操作符，假设输入I被变异。它在行走形式中的相应表示是W = [T1, ..TN ]，由N个转换组成，用于从自动机的起始状态到达其最终接受状态。访问过的自动机状态为S = [S1, ..SN +1]。
+
++ Splice: 假设有两个表示为自动机行走路径的输入，W1 和 W2。从 W1 中随机选择一个转换作为拼接点，记作 TC，其中 1 ≤ C ≤ N。从该点出发的子路径将被替换为来自 W2 的一个适当的子路径，这个子路径与 TC 相同的起始状态，即 SC。自动机在拼接方面表现优于解析树，因为解析树需要对解析树节点进行繁重的重构。该操作符不仅改变了在所选拼接点下的子树，还改变了子树右侧的所有内容。对于自动机，相同的变异只需要将两个列表连接起来。
+
++ random mutation: Gramatron执行一个三步过程来执行这种变异。
+
+首先，它在行走路径 W 中选择一个随机转换 TC，以分叉这个路径。
+
+```c
+// Get offset at which to generate new input and slice it
+int idx = rand() % input->used;
+sliced = slice(input, idx);
+```
+
+第二，它使用 C - 1 个转换生成输入的未变异部分，保持原样。
+
+第三，在分叉的状态下，Gramatron在自动机上进行随机行走，直到达到最终状态，从而生成变异体。这个操作符在生成以自动机行走路径表示的输入方面变得更快。这是因为它需要从提供的语法中生成变异体的新子字符串。由于语法自动机使得输入生成更快，新变异体的子字符串生成也更快。
+
++ random recursive: 在没有预处理的情况下，在解析树中查找递归的运行时复杂性为 O(n log n)，其中 n 是树节点的数量。这是因为对于每个节点，您必须递归地遍历其父节点，以找到所有递归特征。Gramatron将查找递归特征的运行时复杂性限制为 O(m)，其中 m 是输入中的终端数量，且 m << n。语法自动机使得 Gramatron 只需遍历一次行走路径 W 就能记录所有递归特征。然后，它将与随机选择的递归特征相对应的子路径复制多达 n 次。在当前的实现中，n = 5。
+
+```c
+/*Concats prefix + feature *mult*/
+void concatPrefixFeature(Array* prefix, Array* feature) { 
+    // XXX: Currently we have hardcoded the multiplication threshold for adding
+    // the recursive feature. Might want to fix it to choose a random number upper
+    // bounded by a static value instead.
+    terminal* featureptr;
+    int len = rand() % RECUR_THRESHOLD;
+    for (int x = 0; x < len; x++) { 
+        for (int y = 0; y < feature->used; y++) {
+            featureptr = & feature->start[y];
+            insertArray(prefix, featureptr->state, featureptr->symbol, featureptr->symbol_len, featureptr->trigger_idx);
+        }
+    }
+}
+```
+
+# 5 IMPLEMENTATION
+
+Gramatron被实现为C和Python混合编程：其（提前编译）语法预处理部分使用Python实现，而（性能关键）输入生成器和变异器部分使用C实现。Gramatron接受一个被模糊测试目标所接受的语法作为输入。Gramatron修改了AFL++ [9]，利用语法自动机在进行模糊测试时执行输入生成和变异操作。此外，Gramatron还利用来自模糊测试目标的代码覆盖反馈来指导其变异操作。
+
+## 5.1 Fuzzing Workflow
+
+Gramatron 是一个基于覆盖率的语法感知模糊器。执行基于覆盖率的模糊测试有三个主要阶段 [23, 47]：(i) 种子调度，从一组种子中选择一个种子用于生成变异体；(ii) 种子变异，从种子生成变异体；(iii) 种子选择，根据反馈选择有趣的种子作为进一步模糊测试的候选。Gramatron 扩展了 AFL++ 的种子变异，使其具备语法感知能力，以生成符合语法的有效输入。为了防止变异体过大，Gramatron 降低了（但没有禁止）达到大于2048字节的输入的优先级。
+
+Gramatron 分为两个阶段：语料生成阶段和模糊测试阶段。在语料生成阶段，Gramatron 通过在语法自动机上执行随机遍历，生成预定义数量的符合语法的种子输入。在当前实现中，Gramatron 生成100个种子输入。使用这个种子语料，Gramatron 转入模糊测试阶段。
+
+每个模糊迭代包括四个步骤：(i) 从队列中选择一个种子；(ii) 将种子通过每个变异操作符进行变异；(iii) 在模糊目标上测试生成的变异体；(iv) 根据覆盖率反馈选择候选项进行进一步测试。此外，为了防止模糊器陷入局部覆盖率最小值，每个模糊迭代还会通过对语法自动机进行随机遍历来生成一个候选项。
