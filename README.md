@@ -8,6 +8,6 @@
 - [x] afl-fuzz 源码
 - [x] MOPT 论文和源码
 - [x] REDQUEEN 论文
-- [ ] LibAFL 论文和源 这是个大工程😫(doing)
+- [ ] LibAFL 论文和源码 这是个大工程😫(doing)
 - [ ] Gramatron 论文
 - [ ] valgrind 源码
