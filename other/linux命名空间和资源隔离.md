@@ -398,3 +398,135 @@ ip netns exec test_ns iptables -L
 这条命令会移除之前的挂载，但是如果namespace本身还有进程运行，namespace还会存在下去，直到进程运行结束。
 
 通过network namespace我们可以了解到，实际上内核创建了network namespace以后，真的是得到了一个被隔离的网络。但是我们实际上需要的不是这种完全的隔离，而是一个对用户来说透明独立的网络实体，我们需要与这个实体通信。所以Docker的网络在起步阶段给人一种非常难用的感觉，因为一切都要自己去实现、去配置。你需要一个网桥或者NAT连接广域网，你需要配置路由规则与宿主机中其他容器进行必要的隔离，你甚至还需要配置防火墙以保证安全等等。
+
+## User namespaces
+
+User namespace主要隔离了安全相关的标识符（identifiers）和属性（attributes），包括用户ID、用户组ID、root目录、key（指密钥）以及特殊权限。说得通俗一点，一个普通用户的进程通过clone()创建的新进程在新user namespace中可以拥有不同的用户和用户组。这意味着一个进程在容器外属于一个没有特权的普通用户，但是他创建的容器进程却属于拥有所有权限的超级用户，这个技术为容器提供了极大的自由。
+
+User namespace是目前的六个namespace中最后一个支持的，并且直到Linux内核3.8版本的时候还未完全实现（还有部分文件系统不支持）。因为user namespace实际上并不算完全成熟，很多发行版担心安全问题，在编译内核的时候并未开启USER_NS。实际上目前Docker也还不支持user namespace，但是预留了相应接口，相信在不久后就会支持这一特性。所以在进行接下来的代码实验时，请确保你系统的Linux内核版本高于3.8并且内核编译时开启了USER_NS（如果你不会选择，可以使用Ubuntu14.04）。
+
+Linux中，特权用户的user ID就是0，演示的最终我们将看到user ID非0的进程启动user namespace后user ID可以变为0。使用user namespace的方法跟别的namespace相同，即调用clone()或unshare()时加入CLONE_NEWUSER标识位。老样子，修改代码并另存为userns.c，为了看到用户权限(Capabilities)，可能你还需要安装一下libcap-dev包。
+
+首先包含以下头文件以调用Capabilities包。
+
+```c
+#include <sys/capability.h>
+```
+
+其次在子进程函数中加入geteuid()和getegid()得到namespace内部的user ID，其次通过cap_get_proc()得到当前进程的用户拥有的权限，并通过cap_to_text（）输出。
+
+```c
+int child_main(void* args) {
+        printf("在子进程中!\n");
+        cap_t caps;
+        printf("eUID = %ld;  eGID = %ld;  ",
+                        (long) geteuid(), (long) getegid());
+        caps = cap_get_proc();
+        printf("capabilities: %s\n", cap_to_text(caps, NULL));
+        execv(child_args[0], child_args);
+        return 1;
+}
+```
+
+在主函数的clone()调用中加入我们熟悉的标识符。
+
+```c
+//[...]
+int child_pid = clone(child_main, child_stack+STACK_SIZE,
+            CLONE_NEWUSER | SIGCHLD, NULL);
+//[...]
+```
+
+至此，第一部分的代码修改就结束了。在编译之前我们先查看一下当前用户的uid和guid，请注意此时我们是普通用户。
+
+``` bash
+$ id -u
+1000
+$ id -g
+1000
+```
+
+然后我们开始编译运行，并进行新建的user namespace，你会发现shell提示符前的用户名已经变为nobody。
+
+``` bash
+sun@ubuntu$ gcc userns.c -Wall -lcap -o userns.o && ./userns.o
+程序开始:
+在子进程中!
+eUID = 65534;  eGID = 65534;  capabilities: = cap_chown,cap_dac_override,[...]37+ep  <<--此处省略部分输出，已拥有全部权限
+nobody@ubuntu$ 
+```
+
+通过验证我们可以得到以下信息。
+
+user namespace被创建后，第一个进程被赋予了该namespace中的全部权限，这样这个init进程就可以完成所有必要的初始化工作，而不会因权限不足而出现错误。
+我们看到namespace内部看到的UID和GID已经与外部不同了，默认显示为65534，表示尚未与外部namespace用户映射。我们需要对user namespace内部的这个初始user和其外部namespace某个用户建立映射，这样可以保证当涉及到一些对外部namespace的操作时，系统可以检验其权限（比如发送一个信号或操作某个文件）。同样用户组也要建立映射。
+
+还有一点虽然不能从输出中看出来，但是值得注意。用户在新namespace中有全部权限，但是他在创建他的父namespace中不含任何权限。就算调用和创建他的进程有全部权限也是如此。所以哪怕是root用户调用了clone()在user namespace中创建出的新用户在外部也没有任何权限。
+
+最后，user namespace的创建其实是一个层层嵌套的树状结构。最上层的根节点就是root namespace，新创建的每个user namespace都有一个父节点user namespace以及零个或多个子节点user namespace，这一点与PID namespace非常相似。
+
+接下来我们就要进行用户绑定操作，通过在/proc/[pid]/uid_map和/proc/[pid]/gid_map两个文件中写入对应的绑定信息可以实现这一点，格式如下。
+
+```
+ID-inside-ns   ID-outside-ns   length
+```
+
+写这两个文件需要注意以下几点。
+
+这两个文件只允许由拥有该user namespace中CAP_SETUID权限的进程写入一次，不允许修改。
+
+写入的进程必须是该user namespace的父namespace或者子namespace。
+
+第一个字段ID-inside-ns表示新建的user namespace中对应的user/group ID，第二个字段ID-outside-ns表示namespace外部映射的user/group ID。最后一个字段表示映射范围，通常填1，表示只映射一个，如果填大于1的值，则按顺序建立一一映射。
+
+明白了上述原理，我们再次修改代码，添加设置uid和guid的函数。
+
+```c
+//[...]
+void set_uid_map(pid_t pid, int inside_id, int outside_id, int length) {
+    char path[256];
+    sprintf(path, "/proc/%d/uid_map", getpid());
+    FILE* uid_map = fopen(path, "w");
+    fprintf(uid_map, "%d %d %d", inside_id, outside_id, length);
+    fclose(uid_map);
+}
+void set_gid_map(pid_t pid, int inside_id, int outside_id, int length) {
+    char path[256];
+    sprintf(path, "/proc/%d/gid_map", getpid());
+    FILE* gid_map = fopen(path, "w");
+    fprintf(gid_map, "%d %d %d", inside_id, outside_id, length);
+    fclose(gid_map);
+}
+int child_main(void* args) {
+    cap_t caps;
+    printf("在子进程中!\n");
+    set_uid_map(getpid(), 0, 1000, 1);
+    set_gid_map(getpid(), 0, 1000, 1);
+    printf("eUID = %ld;  eGID = %ld;  ",
+            (long) geteuid(), (long) getegid());
+    caps = cap_get_proc();
+    printf("capabilities: %s\n", cap_to_text(caps, NULL));
+    execv(child_args[0], child_args);
+    return 1;
+}
+//[...]
+```
+
+编译后即可看到user已经变成了root。
+
+``` bash
+$ gcc userns.c -Wall -lcap -o usernc.o && ./usernc.o
+程序开始:
+在子进程中!
+eUID = 0;  eGID = 0;  capabilities: = [...],37+ep
+root@ubuntu:~#
+```
+
+至此，你就已经完成了绑定的工作，可以看到演示全程都是在普通用户下执行的。最终实现了在user namespace中成为了root而对应到外面的是一个uid为1000的普通用户。
+
+如果你要把user namespace与其他namespace混合使用，那么依旧需要root权限。解决方案可以是先以普通用户身份创建user namespace，然后在新建的namespace中作为root再clone()进程加入其他类型的namespace隔离。
+
+讲完了user namespace，我们再来谈谈Docker。虽然Docker目前尚未使用user namespace，但是他用到了我们在user namespace中提及的Capabilities机制。从内核2.2版本开始，Linux把原来和超级用户相关的高级权限划分成为不同的单元，称为Capability。这样管理员就可以独立对特定的Capability进行使能或禁止。Docker虽然没有使用user namespace，但是他可以禁用容器中不需要的Capability，一次在一定程度上加强容器安全性。
+
+当然，说到安全，namespace的六项隔离看似全面，实际上依旧没有完全隔离Linux的资源，比如SELinux、 Cgroups以及/sys、/proc/sys、/dev/sd*等目录下的资源。
+
