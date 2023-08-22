@@ -31,3 +31,41 @@ cgroups 是 Linux 内核提供的一种机制，这种机制可以根据特定�
 + cgroup（控制组）：cgroups 中的资源控制都以 cgroup 为单位实现。cgroup 表示按某种资源控制标准划分而成的任务组，包含一个或多个子系统。一个任务可以加入某个 cgroup，也可以从某个 cgroup 迁移到另外一个 cgroup。
 + subsystem（子系统）：cgroups 中的 subsystem 就是一个资源调度控制器（Resource Controller）。比如 CPU 子系统可以控制 CPU 时间分配，内存子系统可以限制 cgroup 内存使用量。
 + hierarchy（层级树）：hierarchy 由一系列 cgroup 以一个树状结构排列而成，每个 hierarchy 通过绑定对应的 subsystem 进行资源调度。hierarchy 中的 cgroup 节点可以包含零或多个子节点，子节点继承父节点的属性。整个系统可以有多个 hierarchy。
+
+## 组织结构与基本规则
+
+传统的 Unix 进程管理，实际上是先启动init进程作为根节点，再由init节点创建子进程作为子节点，而每个子节点由可以创建新的子节点，如此往复，形成一个树状结构。而 cgroups 也是类似的树状结构，子节点都从父节点继承属性。
+
+它们最大的不同在于，系统中 cgroup 构成的 hierarchy 可以允许存在多个。如果进程模型是由init作为根节点构成的一棵树的话，那么 cgroups 的模型则是由多个 hierarchy 构成的森林。这样做的目的也很好理解，如果只有一个 hierarchy，那么所有的 task 都要受到绑定其上的 subsystem 的限制，会给那些不需要这些限制的 task 造成麻烦。
+
+了解了 cgroups 的组织结构，我们再来了解 cgroup、task、subsystem 以及 hierarchy 四者间的相互关系及其基本规则。
+
++ 规则 1： 同一个 hierarchy 可以附加一个或多个 subsystem。如下图 1，cpu 和 memory 的 subsystem 附加到了一个 hierarchy。
+
+![](https://raw.githubusercontent.com/mark0-cn/blog_img/master/img/202308222040527.png)
+
++ 规则 2： 一个 subsystem 可以附加到多个 hierarchy，当且仅当这些 hierarchy 只有这唯一一个 subsystem。如下图 2，小圈中的数字表示 subsystem 附加的时间顺序，CPU subsystem 附加到 hierarchy A 的同时不能再附加到 hierarchy B，因为 hierarchy B 已经附加了 memory subsystem。如果 hierarchy B 与 hierarchy A 状态相同，没有附加过 memory subsystem，那么 CPU subsystem 同时附加到两个 hierarchy 是可以的。
+
+![](https://raw.githubusercontent.com/mark0-cn/blog_img/master/img/202308222041877.png)
+
++ 规则 3： 系统每次新建一个 hierarchy 时，该系统上的所有 task 默认构成了这个新建的 hierarchy 的初始化 cgroup，这个 cgroup 也称为 root cgroup。对于你创建的每个 hierarchy，task 只能存在于其中一个 cgroup 中，即一个 task 不能存在于同一个 hierarchy 的不同 cgroup 中，但是一个 task 可以存在在不同 hierarchy 中的多个 cgroup 中。如果操作时把一个 task 添加到同一个 hierarchy 中的另一个 cgroup 中，则会从第一个 cgroup 中移除。在下图 3 中可以看到，httpd进程已经加入到 hierarchy A 中的/cg1而不能加入同一个 hierarchy 中的/cg2，但是可以加入 hierarchy B 中的/cg3。实际上不允许加入同一个 hierarchy 中的其他 cgroup 野生为了防止出现矛盾，如 CPU subsystem 为/cg1分配了 30%，而为/cg2分配了 50%，此时如果httpd在这两个 cgroup 中，就会出现矛盾。
+
+![](https://raw.githubusercontent.com/mark0-cn/blog_img/master/img/202308222043262.png)
+
++ 规则 4： 进程（task）在 fork 自身时创建的子任务（child task）默认与原 task 在同一个 cgroup 中，但是 child task 允许被移动到不同的 cgroup 中。即 fork 完成后，父子进程间是完全独立的。如下图 4 中，小圈中的数字表示 task 出现的时间顺序，当httpd刚 fork 出另一个httpd时，在同一个 hierarchy 中的同一个 cgroup 中。但是随后如果 PID 为 4840 的httpd需要移动到其他 cgroup 也是可以的，因为父子任务间已经独立。总结起来就是：初始化时子任务与父任务在同一个 cgroup，但是这种关系随后可以改变。
+
+![](https://raw.githubusercontent.com/mark0-cn/blog_img/master/img/202308222044073.png)
+
+## subsystem 简介
+
+subsystem 实际上就是 cgroups 的资源控制系统，每种 subsystem 独立地控制一种资源，目前 Docker 使用如下八种 subsystem，还有一种net_cls subsystem 在内核中已经广泛实现，但是 Docker 尚未使用。他们的用途分别如下。
+
++ blkio： 这个 subsystem 可以为块设备设定输入 / 输出限制，比如物理驱动设备（包括磁盘、固态硬盘、USB 等）。
++ cpu： 这个 subsystem 使用调度程序控制 task 对 CPU 的使用。
++ cpuacct： 这个 subsystem 自动生成 cgroup 中 task 对 CPU 资源使用情况的报告。
++ cpuset： 这个 subsystem 可以为 cgroup 中的 task 分配独立的 CPU（此处针对多处理器系统）和内存。
++ devices 这个 subsystem 可以开启或关闭 cgroup 中 task 对设备的访问。
++ freezer 这个 subsystem 可以挂起或恢复 cgroup 中的 task。
++ memory 这个 subsystem 可以设定 cgroup 中 task 对内存使用量的限定，并且自动生成这些 task 对内存资源使用情况的报告。
++ perf_event_ _ 这个 subsystem 使用后使得 cgroup 中的 task 可以进行统一的性能测试。
++ *net_cls 这个 subsystem Docker 没有直接使用，它通过使用等级识别符 (classid) 标记网络数据包，从而允许 Linux 流量控制程序（TC：Traffic Controller）识别从具体 cgroup 中生成的数据包。
