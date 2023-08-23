@@ -69,3 +69,17 @@ subsystem 实际上就是 cgroups 的资源控制系统，每种 subsystem 独�
 + memory 这个 subsystem 可以设定 cgroup 中 task 对内存使用量的限定，并且自动生成这些 task 对内存资源使用情况的报告。
 + perf_event_ _ 这个 subsystem 使用后使得 cgroup 中的 task 可以进行统一的性能测试。
 + *net_cls 这个 subsystem Docker 没有直接使用，它通过使用等级识别符 (classid) 标记网络数据包，从而允许 Linux 流量控制程序（TC：Traffic Controller）识别从具体 cgroup 中生成的数据包。
+
+## cgroups 实现方式及工作原理简介
+
+### cgroups 实现结构讲解
+
+cgroups 的实现本质上是给系统进程挂上钩子（hooks），当 task 运行的过程中涉及到某个资源时就会触发钩子上所附带的 subsystem 进行检测，最终根据资源类别的不同使用对应的技术进行资源限制和优先级分配。
+
+![](https://raw.githubusercontent.com/mark0-cn/blog_img/master/img/202308232251732.png)
+
+Linux 中管理 task 进程的数据结构为task_struct（包含所有进程管理的信息），其中与 cgroup 相关的字段主要有两个，一个是css_set *cgroups，表示指向css_set（包含进程相关的 cgroups 信息）的指针，一个 task 只对应一个css_set结构，但是一个css_set可以被多个 task 使用。另一个字段是list_head cg_list，是一个链表的头指针，这个链表包含了所有的链到同一个css_set的 task 进程（在图中使用的回环箭头，均表示可以通过该字段找到所有同类结构，获得信息）。
+
+每个css_set结构中都包含了一个指向cgroup_subsys_state（包含进程与一个特定子系统相关的信息）的指针数组。cgroup_subsys_state则指向了cgroup结构（包含一个 cgroup 的所有信息），通过这种方式间接的把一个进程和 cgroup 联系了起来，如下图。
+
+![](https://raw.githubusercontent.com/mark0-cn/blog_img/master/img/202308232251590.png)
