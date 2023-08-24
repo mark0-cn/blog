@@ -83,3 +83,19 @@ Linux 中管理 task 进程的数据结构为task_struct（包含所有进程管
 每个css_set结构中都包含了一个指向cgroup_subsys_state（包含进程与一个特定子系统相关的信息）的指针数组。cgroup_subsys_state则指向了cgroup结构（包含一个 cgroup 的所有信息），通过这种方式间接的把一个进程和 cgroup 联系了起来，如下图。
 
 ![](https://raw.githubusercontent.com/mark0-cn/blog_img/master/img/202308232251590.png)
+
+另一方面，cgroup结构体中有一个list_head css_sets字段，它是一个头指针，指向由cg_cgroup_link（包含 cgroup 与 task 之间多对多关系的信息，后文还会再解释）形成的链表。由此获得的每一个cg_cgroup_link都包含了一个指向css_set *cg字段，指向了每一个 task 的css_set。css_set结构中则包含tasks头指针，指向所有链到此css_set的 task 进程构成的链表。至此，我们就明白如何查看在同一个 cgroup 中的 task 有哪些了，如下图。
+
+![](https://raw.githubusercontent.com/mark0-cn/blog_img/master/img/202308242212548.png)
+
+css_set中也有指向所有cg_cgroup_link构成链表的头指针，通过这种方式也能定位到所有的 cgroup，这种方式与图 1 中所示的方式得到的结果是相同的。
+
+那么为什么要使用cg_cgroup_link结构体呢？因为 task 与 cgroup 之间是多对多的关系。熟悉数据库的读者很容易理解，在数据库中，如果两张表是多对多的关系，那么如果不加入第三张关系表，就必须为一个字段的不同添加许多行记录，导致大量冗余。通过从主表和副表各拿一个主键新建一张关系表，可以提高数据查询的灵活性和效率。
+
+而一个 task 可能处于不同的 cgroup，只要这些 cgroup 在不同的 hierarchy 中，并且每个 hierarchy 挂载的子系统不同；另一方面，一个 cgroup 中可以有多个 task，这是显而易见的，但是这些 task 因为可能还存在在别的 cgroup 中，所以它们对应的css_set也不尽相同，所以一个 cgroup 也可以对应多个·css_set。
+
+在系统运行之初，内核的主函数就会对root cgroups和css_set进行初始化，每次 task 进行 fork/exit 时，都会附加（attach）/ 分离（detach）对应的css_set。
+
+综上所述，添加cg_cgroup_link主要是出于性能方面的考虑，一是节省了task_struct结构体占用的内存，二是提升了进程fork()/exit()的速度。
+
+![](https://raw.githubusercontent.com/mark0-cn/blog_img/master/img/202308242213158.png)
