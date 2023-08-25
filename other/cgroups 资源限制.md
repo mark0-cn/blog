@@ -99,3 +99,11 @@ css_set中也有指向所有cg_cgroup_link构成链表的头指针，通过这�
 综上所述，添加cg_cgroup_link主要是出于性能方面的考虑，一是节省了task_struct结构体占用的内存，二是提升了进程fork()/exit()的速度。
 
 ![](https://raw.githubusercontent.com/mark0-cn/blog_img/master/img/202308242213158.png)
+
+当 task 从一个 cgroup 中移动到另一个时，它会得到一个新的css_set指针。如果所要加入的 cgroup 与现有的 cgroup 子系统相同，那么就重复使用现有的css_set，否则就分配一个新css_set。所有的css_set通过一个哈希表进行存放和查询，如上图 8 中所示，hlist_node hlist就指向了css_set_table这个 hash 表。
+
+同时，为了让 cgroups 便于用户理解和使用，也为了用精简的内核代码为 cgroup 提供熟悉的权限和命名空间管理，内核开发者们按照 Linux 虚拟文件系统转换器（VFS：Virtual Filesystem Switch）的接口实现了一套名为cgroup的文件系统，非常巧妙地用来表示 cgroups 的 hierarchy 概念，把各个 subsystem 的实现都封装到文件系统的各项操作中。有兴趣的读者可以在网上搜索并阅读 VFS 的相关内容，在此就不赘述了。
+
+定义子系统的结构体是cgroup_subsys，在图 9 中可以看到，cgroup_subsys中定义了一组函数的接口，让各个子系统自己去实现，类似的思想还被用在了cgroup_subsys_state中，cgroup_subsys_state并没有定义控制信息，只是定义了各个子系统都需要用到的公共信息，由各个子系统各自按需去定义自己的控制信息结构体，最终在自定义的结构体中把cgroup_subsys_state包含进去，然后内核通过container_of（这个宏可以通过一个结构体的成员找到结构体自身）等宏定义来获取对应的结构体。
+
+![](https://raw.githubusercontent.com/mark0-cn/blog_img/master/img/202308252305555.png)
