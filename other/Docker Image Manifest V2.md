@@ -18,7 +18,13 @@ The following media types are used by the manifest formats described here, and t
 
 ### Manifest List
 
-manifest list 是指向一个或多个平台的特定镜像清单的“fat manifest”。它的使用是可选的，并且相对较少的镜像将使用这些清单之一。客户端将根据HTTP响应中返回的Content-Type来区分 manifest list 和镜像清单。
+manifest list 是指向一个或多个平台的特定镜像清单的“fat manifest”。它的使用是可选的，并且相对较少的镜像将使用这些清单之一。客户端将根据HTTP响应中返回的Content-Type来区分 manifest list 和 image manifest。
+
+Content-Type:
+
+manifest list: `application/vnd.oci.image.index.v1+json`
+
+image manifest: `application/vnd.docker.distribution.manifest.v1+prettyjws`
 
 ### Manifest List Field Descriptions
 
