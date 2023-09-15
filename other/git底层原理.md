@@ -49,3 +49,22 @@ $ git cat-file -s fa49b077972391ad58037050f2a75f74e3671e92
 $ git cat-file -p fa49b077972391ad58037050f2a75f74e3671e92
 new file
 ```
+
+### Tree Object
+
+Tree Object 用于存储目录文件的内容数据，其头部信息为 “tree” + 空格 + 内容字节数 + \0，存储内容为 一个或多个树对象记录（Tree Entry）。
+
+其中，树对象记录的结构（Git v2.0.0）为：文件模式 + 空格 + 树对象记录的字节数 + 文件路径 + \0 + SHA-1。
+
+如果某一时刻，Git 仓库的文件结构如下所示，那么在 Git 文件系统中，会建立一个对象关系图，如下图所示。
+
+```
+$ tree
+.
+├── bak
+│   └── test.txt
+├── new.txt
+└── test.txt
+```
+
+![](https://raw.githubusercontent.com/mark0-cn/blog_img/master/img/202309152008224.png)
