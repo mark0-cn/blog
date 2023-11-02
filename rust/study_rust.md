@@ -84,3 +84,59 @@ Cargo.toml 和 Cargo.lock 是 Cargo 的两个元配置文件，但是它们拥�
 原因是 Cargo.lock 会详尽描述上一次成功构建的各种信息：环境状态、依赖、版本等等，Cargo 可以使用它提供确定性的构建环境和流程，无论何时何地。这种特性对于终端服务是非常重要的：能确定、稳定的在用户环境中运行起来是终端服务最重要的特性之一。
 
 而对于三方库来说，情况就有些不同。它不仅仅被库的开发者所使用，还会间接影响依赖链下游的使用者。用户引入了三方库是不会去看它的 Cargo.lock 信息的，也不应该受这个库的确定性运行条件所限制。
+
+### UnsafeCell Cell RefCell
+
+为了实现内部库可变性(interior mutability)
+
+UnsafeCell -> Cell -> RefCell
+
+UnsafeCell
+
+提供一个get方法，可以使不可变引用&T，获取到可变引用*mut T指针，它通过强转实现，强转到裸指针是安全的，但要注意正确的对它进行解引用。
+
+```rust
+pub const fn get(&self) -> *mut T {
+   self as *const UnsafeCell<T> as *const T as *mut T
+}
+```
+
+为什么可以将*const UnsafeCell<T>强转成*const T ?
+UnsafeCell使用了#[repr(transparent)]属性宏，显示指定了UnsafeCell<T>内存结构必须与T相同，所以完全可以转换UnsafeCell<T>到T
+
+Cell
+
+```rust
+impl<T> Cell<T> {
+   pub fn set(&self, val: T) {
+      let old = self.replace(val);
+      drop(old);
+   }
+   pub fn replace(&self, val: T) -> T {
+      mem::replace(unsafe { &mut *self.value.get() }, val)
+   }
+}
+```
+
+通过Unsafe block调用Unsafecell的get方法获取&mut T，之后通过mem::replace进行替换
+
+RefCell
+
+```rust
+#[cfg_attr(not(test), rustc_diagnostic_item = "RefCell")]
+#[stable(feature = "rust1", since = "1.0.0")]
+pub struct RefCell<T: ?Sized> {
+    borrow: Cell<BorrowFlag>,
+    // Stores the location of the earliest currently active borrow.
+    // This gets updated whenever we go from having zero borrows
+    // to having a single borrow. When a borrow occurs, this gets included
+    // in the generated `BorrowError`/`BorrowMutError`
+    #[cfg(feature = "debug_refcell")]
+    borrowed_at: Cell<Option<&'static crate::panic::Location<'static>>>,
+    value: UnsafeCell<T>,
+}
+```
+
+提供了borrow和borrow_mut方法用来获取&T和&mut T
+
+通过对BorrowFlag值的加减操作实现对Ownship的检查
