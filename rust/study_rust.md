@@ -140,3 +140,116 @@ pub struct RefCell<T: ?Sized> {
 提供了borrow和borrow_mut方法用来获取&T和&mut T
 
 通过对BorrowFlag值的加减操作实现对Ownship的检查
+
+### 关联类型与泛型类型的区别
+
+- 对于某一特性，每个类型仅应当有单一实现时，使用关联类型。
+- 对于某一特性，每个类型可以有多个实现时，使用泛型类型。
+
+https://github.com/pretzelhammer/rust-blog/blob/master/posts/translations/zh-hans/tour-of-rusts-standard-library-traits.md#%E6%B3%9B%E5%9E%8B%E7%B1%BB%E5%9E%8B%E4%B8%8E%E5%85%B3%E8%81%94%E7%B1%BB%E5%9E%8B-generic-types-vs-associated-types
+
+### 子特性与超特性 Subtraits & Supertraits
+
+子特性的“子”即为子集，超特性的“超”即为超集。若有下列特性声明：
+
+```rust
+trait Subtrait: Supertrait {}
+```
+
+所有实现了子特性的类型都是实现了超特性的类型的子集，也可以说，所有实现了超特性的类型都是实现了子特性的类型的超集。
+
+以上代码等价于：
+
+``` rust
+trait Subtrait where Self: Supertrait {}
+```
+
+此外，对于特定类型如何同时实现子特性与超特性并没有规定。子、超特性之间的方法也可以相互调用。
+
+```rust
+trait Supertrait {
+    fn super_method(&mut self);
+}
+
+trait Subtrait: Supertrait {
+    fn sub_method(&mut self);
+}
+
+struct CallSuperFromSub;
+
+impl Supertrait for CallSuperFromSub {
+    fn super_method(&mut self) {
+        println!("in super");
+    }
+}
+
+impl Subtrait for CallSuperFromSub {
+    fn sub_method(&mut self) {
+        println!("in sub");
+        self.super_method();
+    }
+}
+
+struct CallSubFromSuper;
+
+impl Supertrait for CallSubFromSuper {
+    fn super_method(&mut self) {
+        println!("in super");
+        self.sub_method();
+    }
+}
+
+impl Subtrait for CallSubFromSuper {
+    fn sub_method(&mut self) {
+        println!("in sub");
+    }
+}
+
+struct CallEachOther(bool);
+
+impl Supertrait for CallEachOther {
+    fn super_method(&mut self) {
+        println!("in super");
+        if self.0 {
+            self.0 = false;
+            self.sub_method();
+        }
+    }
+}
+
+impl Subtrait for CallEachOther {
+    fn sub_method(&mut self) {
+        println!("in sub");
+        if self.0 {
+            self.0 = false;
+            self.super_method();
+        }
+    }
+}
+
+fn main() {
+    CallSuperFromSub.super_method(); // prints "in super"
+    CallSuperFromSub.sub_method(); // prints "in sub", "in super"
+    
+    CallSubFromSuper.super_method(); // prints "in super", "in sub"
+    CallSubFromSuper.sub_method(); // prints "in sub"
+    
+    CallEachOther(true).super_method(); // prints "in super", "in sub"
+    CallEachOther(true).sub_method(); // prints "in sub", "in super"
+}
+```
+
+现在，让我们看看 Copy 特性的声明：
+
+```rust
+trait Copy: Clone {}
+```
+
+以上的记号和之前我们为泛型添加特性约束的记号非常相似，但是 Copy 却完全不依赖 Clone 。早前建立的心智模型现在不适用了。在我看来，理解子特性与超特性的关系的最简单和最优雅的心智模型莫过于 —— 子特性 改良 了超特性。
+
+“改良”一词故意地预留了一些模糊的空间，它的具体含义在不同的上下文中有所不同：
+
+- 子特性可能比超特性的方法更加特异化、运行更快或使用更少内存等等，例如 Copy: Clone
+- 子特性可能比超特性的方法具有额外的功能，例如 Eq: PartialEq ， Ord: PartialOrd 和 ExactSizeIterator: Iterator
+- 子特性可能比超特性的方法更灵活和更易于调用，例如 FnMut: FnOnce 和 Fn: FnMut
+- 子特性可能扩展了超特性并添加了新的方法，例如 DoubleEndedIterator: Iterator 和 ExactSizeIterator: Iterator
