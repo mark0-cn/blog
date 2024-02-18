@@ -9,11 +9,7 @@
 
 # 笔记
 
-[linux命名空间和资源隔离](./other/linux%E5%91%BD%E5%90%8D%E7%A9%BA%E9%97%B4%E5%92%8C%E8%B5%84%E6%BA%90%E9%9A%94%E7%A6%BB.md)
-
-[Docker Image Manifest V2](./other/Docker%20Image%20Manifest%20V2.md)
-
-[git底层原理](./other/git%E5%BA%95%E5%B1%82%E5%8E%9F%E7%90%86.md)
+请见该仓库内子文件夹
 
 # Todo List
 
@@ -22,5 +18,5 @@
 - [x] REDQUEEN 论文
 - [x] LibAFL 论文和源码
 - [x] Gramatron 论文
-- [ ] EcoFuzz 论文
-- [ ] valgrind 源码
+- [x] TinyLFU
+
